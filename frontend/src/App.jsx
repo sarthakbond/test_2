@@ -243,10 +243,21 @@ function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capt
           </div>
         </div>
 
-        <div className="camera-actions" style={{justifyContent: 'center', width: '100%', margin: 0}}>
+        <div className="camera-actions" style={{justifyContent: 'center', width: '100%', margin: 0, flexDirection: 'column', gap: '15px', alignItems: 'center'}}>
           <button type="button" className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} disabled>
             {isComplete ? <><Camera size={17} /> Scan Complete</> : <><LoaderCircle className="spin" size={17} /> Scanning ({progressCount}/5)...</>}
           </button>
+          
+          {!isComplete && (
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 15px', background: 'rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '13px', transition: 'all 0.2s', marginTop: '10px' }}>
+              <UploadCloud size={15} /> <span>Or select a photo manually</span>
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  setCapturedFiles(prev => [...prev, e.target.files[0]]);
+                }
+              }} />
+            </label>
+          )}
         </div>
         {cameraError && <div className="camera-error" style={{marginTop: '15px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}
       </div>
@@ -259,9 +270,9 @@ function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capt
         </div>
         
         {registerResult && <div className={`form-result ${registerResult.type}`}><Check size={16} />{registerResult.text}</div>}
-        <button className="button primary submit-reference" disabled={!isComplete || !personId || !personName || !personEmail || isRegistering} style={{marginTop: '25px'}}>
+        <button className="button primary submit-reference" disabled={capturedFiles.length === 0 || !personId || !personName || !personEmail || isRegistering} style={{marginTop: '25px'}}>
           {isRegistering ? <LoaderCircle className="spin" size={16} /> : <UserRound size={16} />}
-          {isRegistering ? 'Registering...' : 'Save Protected Profile'}
+          {isRegistering ? 'Adding identity...' : `Register User`}
         </button>
       </form>
     </div>
