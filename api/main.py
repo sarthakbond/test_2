@@ -24,6 +24,10 @@ from core.ai_detector import AIImageDetector
 from db.database import DatabaseManager
 from core.video_processor import extract_video_metadata, sample_video_frames
 from core.metadata_analyzer import MetadataAnalyzer
+from core.visual_index import visual_index_manager
+from core.face_masker import mask_faces
+from core.forensic_analyzer import compare_faces, get_reference_image, analyze_forensic_risk
+from core.notifier import send_alert_email
 
 app = FastAPI(
     title="SWARAKSHA API",
@@ -77,6 +81,9 @@ async def startup_event():
     metadata_analyzer = MetadataAnalyzer()
     print("  ✓ Metadata Analyzer ready")
 
+    # 6. Visual Index (Layer 3)
+    visual_index_manager.build_index()
+
     print("[SWARAKSHA] ═══════════════════════════════════════")
     print("[SWARAKSHA] All systems operational!")
     print("[SWARAKSHA] ═══════════════════════════════════════")
@@ -98,6 +105,7 @@ def _decode_image(contents: bytes) -> np.ndarray:
 class PersonResponse(BaseModel):
     person_id: str
     name: str
+    email: Optional[str] = None
     created_at: Optional[str] = None
     image_count: int = 0
 
@@ -180,6 +188,23 @@ class VideoFrameResult(BaseModel):
     protected_identity_detected: bool
     ai_analysis: VideoFrameAIResult
 
+class Layer3Match(BaseModel):
+    query_frame: int
+    query_timestamp: float
+    reference: dict
+    context_similarity: float
+    face_similarity: float
+    face_discrepancy: bool
+
+class Layer3Result(BaseModel):
+    performed: bool
+    query_frames: int = 0
+    visual_matches_found: int = 0
+    strong_matches: int = 0
+    context_discrepancies: int = 0
+    status: str = "NOT_ANALYZED"
+    matches: List[Layer3Match] = []
+
 class VideoScanDetailedResponse(BaseModel):
     video: VideoMetadata
     identity: VideoIdentityResult
@@ -188,6 +213,7 @@ class VideoScanDetailedResponse(BaseModel):
     frames: List[VideoFrameResult]
     summary: str
     metadata_forensics: Optional[dict] = None
+    layer_3: Optional[Layer3Result] = None
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
@@ -207,6 +233,7 @@ def health_check():
 async def register_person(
     person_id: str = Form(...),
     name: str = Form(...),
+    email: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
 ):
     """
@@ -218,7 +245,7 @@ async def register_person(
 
     # Create person in database (or skip if already exists)
     try:
-        db.add_person(person_id, name)
+        db.add_person(person_id, name, email)
     except ValueError:
         # Person already exists — we'll just add more images
         pass
@@ -523,7 +550,7 @@ async def scan_video(file: UploadFile = File(...)):
             frames_results.append(frame_res)
             
             if protected_detected:
-                relevant_frames.append((frame_res, protected_face_crops))
+                relevant_frames.append((frame_res, protected_face_crops, faces, frame_img))
 
         print(f"[VIDEO] Protected identity found in {len(relevant_frames)}/{len(sampled_frames)} frames")
 
@@ -577,9 +604,72 @@ async def scan_video(file: UploadFile = File(...)):
             
         print(f"[VIDEO] AI analysis completed: {frames_analyzed} frames")
 
+        # --- LAYER 3: Visual Forensics ---
+        l3_matches = []
+        l3_query_frames = 0
+        l3_strong_matches = 0
+        l3_context_discrepancies = 0
+        l3_status = "NOT_ANALYZED"
+
+        if flagged_frames_count > 0:
+            print("[SWARAKSHA] Layer 3 Context Check running for suspicious frames...")
+            for frame_res, crops, faces, frame_img in relevant_frames:
+                if frame_res.ai_analysis.result == "AI_GENERATED":
+                    l3_query_frames += 1
+                    # Mask protected faces in the query frame
+                    masked_frame = mask_faces(frame_img, faces)
+                    
+                    # Generate visual embedding
+                    visual_index_manager._init_encoder()
+                    query_emb = visual_index_manager.encoder.encode_image(masked_frame)
+                    
+                    # Search FAISS index
+                    search_results = visual_index_manager.search(query_emb, top_k=5)
+                    
+                    for match in search_results:
+                        l3_strong_matches += 1
+                        ref_meta = match["reference"]
+                        # Get reference image to compare faces
+                        ref_img = get_reference_image(ref_meta)
+                        face_sim = compare_faces(frame_img, ref_img)
+                        
+                        # If face_sim is low (<0.4), it's a discrepancy!
+                        discrepancy = face_sim < 0.4
+                        if discrepancy:
+                            l3_context_discrepancies += 1
+                            
+                        l3_matches.append(Layer3Match(
+                            query_frame=frame_res.frame_number,
+                            query_timestamp=frame_res.timestamp,
+                            reference=ref_meta,
+                            context_similarity=match["similarity"],
+                            face_similarity=face_sim,
+                            face_discrepancy=discrepancy
+                        ))
+                        
+            if l3_matches:
+                if l3_context_discrepancies > 0:
+                    l3_status = "POSSIBLE_FACE_REPLACEMENT"
+                else:
+                    l3_status = "CONTEXT_MATCH_SAME_PERSON"
+            else:
+                l3_status = "NO_CONTEXT_MATCHES"
+                
+        layer_3_result = Layer3Result(
+            performed=(l3_query_frames > 0),
+            query_frames=l3_query_frames,
+            visual_matches_found=len(l3_matches),
+            strong_matches=l3_strong_matches,
+            context_discrepancies=l3_context_discrepancies,
+            status=l3_status,
+            matches=l3_matches
+        )
+
         # 6. Video Decision
         # Check if metadata forensics found strong AI markers
         meta_boost = (video_meta_forensics and video_meta_forensics.get('confidence') in ('medium', 'high'))
+        
+        has_context_discrepancy = layer_3_result.context_discrepancies > 0
 
         if frames_with_identity_count == 0:
             final_status = "NO_THREAT_DETECTED"
@@ -588,19 +678,33 @@ async def scan_video(file: UploadFile = File(...)):
             if meta_boost:
                 summary += " ⚠️ However, file metadata contains AI-generation markers."
         else:
-            if flagged_ratio >= 0.3 or (flagged_frames_count > 0 and aggregate_score >= config.AI_DETECTOR_THRESHOLD) or meta_boost:
-                final_status = "POTENTIAL_AI_MANIPULATION"
+            # ONLY flag POTENTIAL_AI_MANIPULATION if has_context_discrepancy is True.
+            # (Identity AND AI manipulation AND Context Discrepancy)
+            is_ai_detected = (flagged_ratio >= 0.3 or (flagged_frames_count > 0 and aggregate_score >= config.AI_DETECTOR_THRESHOLD) or meta_boost)
+            
+            if has_context_discrepancy and is_ai_detected:
+                final_status = "HIGH_RISK_CONTENT"
                 ai_status = "POTENTIAL_AI_MANIPULATION"
-                reasons = []
-                if flagged_frames_count > 0:
-                    reasons.append(f"{flagged_frames_count} frames flagged by AI detector")
-                if meta_boost:
-                    reasons.append("file metadata contains AI-generation markers")
-                summary = f"REVIEW REQUIRED: {', '.join(reasons)}."
+                reasons = ["Identity matched", "AI generation detected", "Context discrepancy confirmed"]
+                summary = f"🚨 REVIEW REQUIRED: High Risk content detected. {', '.join(reasons)}."
+                
+                # TRIGGER EMAIL ALERT
+                if person_ids_detected:
+                    for pid in person_ids_detected:
+                        person = db.get_person(pid)
+                        if person and person.get('email'):
+                            send_alert_email(person['email'], person['name'], file.filename, summary)
+                            print(f"[SWARAKSHA] Triggered email alert to {person['email']}")
+                            
             else:
-                final_status = "REVIEW_REQUIRED" if flagged_frames_count > 0 else "NO_THREAT_DETECTED"
-                ai_status = "NO_STRONG_AI_EVIDENCE"
-                summary = f"CLEAR: Protected identity found in {frames_with_identity_count} frames. No strong evidence of manipulation."
+                # If not all 3 flags trigger, we downgrade
+                final_status = "REVIEW_REQUIRED" if (is_ai_detected or flagged_frames_count > 0) else "NO_THREAT_DETECTED"
+                ai_status = "POTENTIAL_AI_MANIPULATION" if flagged_frames_count > 0 else "NO_STRONG_AI_EVIDENCE"
+                
+                if final_status == "REVIEW_REQUIRED":
+                    summary = "⚠️ REVIEW REQUIRED: Some anomalies detected, but not all 3 flags were triggered."
+                else:
+                    summary = f"✅ CLEAR: Protected identity found in {frames_with_identity_count} frames. No strong evidence of multi-layer manipulation."
                 
         print(f"[VIDEO] Final status: {final_status}")
 
@@ -627,12 +731,31 @@ async def scan_video(file: UploadFile = File(...)):
             final_status=final_status,
             summary=summary,
             frames=frames_results,
-            metadata_forensics=video_meta_forensics
+            metadata_forensics=video_meta_forensics,
+            layer_3=layer_3_result
         )
 
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@app.post("/api/reverse-search")
+async def reverse_image_search(file: UploadFile = File(...)):
+    """Reverse search an image against the Layer 3 visual index."""
+    contents = await file.read()
+    img = _decode_image(contents)
+    
+    # Optional: Detect and mask faces to focus purely on context
+    faces = generate_frame_embeddings(img)
+    if faces:
+        img = mask_faces(img, faces)
+        
+    visual_index_manager._init_encoder()
+    query_emb = visual_index_manager.encoder.encode_image(img)
+    search_results = visual_index_manager.search(query_emb, top_k=5)
+    
+    return {"matches": search_results}
 
 
 @app.get("/api/persons", response_model=List[PersonResponse])

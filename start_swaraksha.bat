@@ -2,11 +2,11 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "PYTHON=C:\Users\Sora\AppData\Local\Programs\Python\Python311\python.exe"
+set "PYTHON=python"
 
-if not exist "%PYTHON%" (
-    echo Python 3.11 was not found at:
-    echo %PYTHON%
+"%PYTHON%" --version >nul 2>&1
+if errorlevel 1 (
+    echo Python was not found.
     pause
     exit /b 1
 )
@@ -20,6 +20,18 @@ if errorlevel 1 (
         pause
         exit /b 1
     )
+)
+
+if not exist "%ROOT%frontend\node_modules" (
+    echo Frontend dependencies are missing. Installing them...
+    cd /d "%ROOT%frontend"
+    call npm.cmd install
+    if errorlevel 1 (
+        echo Frontend dependency installation failed.
+        pause
+        exit /b 1
+    )
+    cd /d "%ROOT%"
 )
 
 start "SWARAKSHA Backend" /D "%ROOT%" cmd /k ""%PYTHON%" -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000"

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Activity, ArrowLeft, Camera, Check, FileVideo, FolderOpen, ImagePlus, LayoutDashboard, LoaderCircle, ScanFace, Shield, ShieldAlert, Sparkles, Trash2, UploadCloud, UserRound, Users, X } from 'lucide-react';
+import { Activity, ArrowLeft, Camera, Check, FileVideo, FolderOpen, ImagePlus, LayoutDashboard, LoaderCircle, ScanFace, Shield, ShieldAlert, Sparkles, Trash2, UploadCloud, UserRound, Users, X, Eye, Image, Search } from 'lucide-react';
 import './index.css';
 
-const API_BASE = 'http://localhost:8000/api';
-const API_ROOT = 'http://localhost:8000';
+const hostname = window.location.hostname || 'localhost';
+const API_ROOT = `http://${hostname}:8000`;
+const API_BASE = `${API_ROOT}/api`;
 
 function App() {
   const [mode, setMode] = useState('start');
@@ -12,11 +13,13 @@ function App() {
   const [cameraError, setCameraError] = useState('');
   const [stream, setStream] = useState(null);
   const [capturedFile, setCapturedFile] = useState(null);
+  const [capturedFiles, setCapturedFiles] = useState([]);
   const [scanResult, setScanResult] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
   const [referenceFiles, setReferenceFiles] = useState([]);
   const [personId, setPersonId] = useState('');
   const [personName, setPersonName] = useState('');
+  const [personEmail, setPersonEmail] = useState('');
   const [registerResult, setRegisterResult] = useState(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [progress, setProgress] = useState(null);
@@ -38,7 +41,7 @@ function App() {
   useEffect(() => () => stream?.getTracks().forEach((track) => track.stop()), [stream]);
 
   const startCamera = async () => {
-    setMode('scan'); setCameraError(''); setScanResult(null); setCapturedFile(null);
+    setMode('live-register'); setCameraError(''); setScanResult(null); setCapturedFile(null); setCapturedFiles([]); setRegisterResult(null);
     try {
       const nextStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       setStream(nextStream);
@@ -53,7 +56,7 @@ function App() {
   }, [stream]);
 
   const stopCamera = () => { stream?.getTracks().forEach((track) => track.stop()); setStream(null); };
-  const goHome = () => { stopCamera(); setMode('start'); setCapturedFile(null); setScanResult(null); setCameraError(''); };
+  const goHome = () => { stopCamera(); setMode('start'); setCapturedFile(null); setScanResult(null); setCameraError(''); setCapturedFiles([]); };
   const log = (message) => setActivityLog((current) => [...current.slice(-5), `${new Date().toLocaleTimeString()}  ${message}`]);
 
   const deletePerson = async (personId) => {
@@ -68,7 +71,7 @@ function App() {
     if (!video || !canvas || !video.videoWidth) return;
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => setCapturedFile(new File([blob], `camera-capture-${Date.now()}.jpg`, { type: 'image/jpeg' })), 'image/jpeg', .92);
+    canvas.toBlob((blob) => setCapturedFiles((current) => [...current, new File([blob], `camera-capture-${Date.now()}.jpg`, { type: 'image/jpeg' })]), 'image/jpeg', .92);
   };
 
   const scanImage = async (event) => {
@@ -83,12 +86,22 @@ function App() {
 
   const uploadScan = (file) => { if (!file?.type.startsWith('image/')) return; stopCamera(); setCapturedFile(file); setCameraError(''); setMode('scan'); };
 
+  const registerLive = async (event) => {
+    event.preventDefault(); if (capturedFiles.length < 5 || !personId || !personName || isRegistering) return;
+    setIsRegistering(true); setRegisterResult(null); setProgress({ label: 'Preparing live images', value: 15 }); log(`Received ${capturedFiles.length} live images.`);
+    const progressTimer = setInterval(() => setProgress((current) => current && current.value < 85 ? { label: current.value < 40 ? 'Detecting faces' : current.value < 70 ? 'Generating embeddings' : 'Saving profile', value: current.value + 5 } : current), 900);
+    const formData = new FormData(); formData.append('person_id', personId); formData.append('name', personName); if (personEmail) formData.append('email', personEmail); capturedFiles.forEach((file) => formData.append('files', file));
+    try { log('Detecting faces and generating embeddings...'); const response = await axios.post(`${API_BASE}/register`, formData); setRegisterResult({ type: 'success', text: response.data.message }); setRecentAdds((current) => ({ ...current, [response.data.person_id]: response.data.faces_registered })); setRegistrationNotice(`${response.data.faces_registered} live reference image${response.data.faces_registered === 1 ? '' : 's'} added to ${personName}.`); setProgress({ label: 'Identity protected', value: 100 }); log(`Saved ${response.data.faces_registered} new reference images.`); const people = await axios.get(`${API_BASE}/persons`); setPersons(people.data); setCapturedFiles([]); setPersonId(''); setPersonName(''); setPersonEmail(''); setTimeout(() => { setProgress(null); stopCamera(); setMode('start'); }, 1500); }
+    catch (error) { setRegisterResult({ type: 'error', text: error.code === 'ERR_NETWORK' ? 'Backend is not running.' : error.response?.data?.detail || 'The backend could not register this identity.' }); }
+    finally { clearInterval(progressTimer); setIsRegistering(false); }
+  };
+
   const registerReference = async (event) => {
     event.preventDefault(); if (!referenceFiles.length || !personId || !personName || isRegistering) return;
     setIsRegistering(true); setRegisterResult(null); setProgress({ label: 'Preparing reference images', value: 15 }); log(`Received ${referenceFiles.length} reference images.`);
     const progressTimer = setInterval(() => setProgress((current) => current && current.value < 85 ? { label: current.value < 40 ? 'Detecting faces in references' : current.value < 70 ? 'Generating identity embeddings' : 'Saving protected profile', value: current.value + 5 } : current), 900);
-    const formData = new FormData(); formData.append('person_id', personId); formData.append('name', personName); referenceFiles.forEach((file) => formData.append('files', file));
-    try { log('Detecting faces and generating embeddings...'); const response = await axios.post(`${API_BASE}/register`, formData); setRegisterResult({ type: 'success', text: response.data.message }); setRecentAdds((current) => ({ ...current, [response.data.person_id]: response.data.faces_registered })); setRegistrationNotice(`${response.data.faces_registered} reference image${response.data.faces_registered === 1 ? '' : 's'} added to ${personName}.`); setProgress({ label: 'Identity protected', value: 100 }); log(`Saved ${response.data.faces_registered} new reference images.`); const people = await axios.get(`${API_BASE}/persons`); setPersons(people.data); setReferenceFiles([]); setPersonId(''); setPersonName(''); setTimeout(() => { setProgress(null); setMode('start'); }, 1000); }
+    const formData = new FormData(); formData.append('person_id', personId); formData.append('name', personName); if (personEmail) formData.append('email', personEmail); referenceFiles.forEach((file) => formData.append('files', file));
+    try { log('Detecting faces and generating embeddings...'); const response = await axios.post(`${API_BASE}/register`, formData); setRegisterResult({ type: 'success', text: response.data.message }); setRecentAdds((current) => ({ ...current, [response.data.person_id]: response.data.faces_registered })); setRegistrationNotice(`${response.data.faces_registered} reference image${response.data.faces_registered === 1 ? '' : 's'} added to ${personName}.`); setProgress({ label: 'Identity protected', value: 100 }); log(`Saved ${response.data.faces_registered} new reference images.`); const people = await axios.get(`${API_BASE}/persons`); setPersons(people.data); setReferenceFiles([]); setPersonId(''); setPersonName(''); setPersonEmail(''); setTimeout(() => { setProgress(null); setMode('start'); }, 1000); }
     catch (error) { setRegisterResult({ type: 'error', text: error.code === 'ERR_NETWORK' ? 'Backend is not running. Start start_swaraksha.bat and try again.' : error.response?.data?.detail || 'The backend could not register this image.' }); }
     finally { clearInterval(progressTimer); setIsRegistering(false); }
   };
@@ -102,16 +115,18 @@ function App() {
     finally { clearInterval(progressTimer); setIsVideoScanning(false); setTimeout(() => setProgress(null), 900); }
   };
 
-  const navItems = [['start', 'Home', LayoutDashboard], ['directory', 'Protected people', Users], ['scan', 'Face scan', ScanFace], ['video', 'Video lab', FileVideo]];
+  const navItems = [['start', 'Home', LayoutDashboard], ['directory', 'Protected people', Users], ['live-register', 'Live Registration', ScanFace], ['video', 'Video lab', FileVideo], ['reverse', 'Reverse search', Search]];
   return <div className="app-shell">
     <aside className="sidebar"><button className="brand" onClick={goHome}><img className="brand-image" src="/icon2.png" alt="SWARAKSHA" /><span><strong>SWARAKSHA</strong><small>identity protection</small></span></button><div className="sidebar-label">Workspace</div><nav>{navItems.map(([id, label, Icon]) => <button className={mode === id ? 'active' : ''} key={id} onClick={() => { if (id === 'scan') startCamera(); else { stopCamera(); setMode(id); } }}><Icon size={17} />{label}</button>)}</nav><div className="sidebar-status"><span className={backendOnline ? 'online' : ''} /><div><strong>{backendOnline ? 'Backend connected' : 'Backend offline'}</strong><small>localhost:8000</small></div></div><div className="sidebar-process"><Activity size={15} /><span>Process monitor</span><b>{isScanning || isRegistering || isVideoScanning ? 'Active' : 'Idle'}</b></div></aside>
     <div className="page-shell"><header className="app-header"><div><span className="eyebrow">SWARAKSHA / {navItems.find(([id]) => id === mode)?.[1]}</span><h1>{mode === 'start' ? 'Your protection desk' : navItems.find(([id]) => id === mode)?.[1]}</h1></div><div className="connection"><i className={backendOnline ? 'online' : ''} />{backendOnline ? 'System ready' : 'Backend offline'}</div></header>
     <main className="main-content">
-      {mode === 'start' && <StartScreen backendOnline={backendOnline} notice={registrationNotice} onScan={startCamera} onReference={() => { setMode('reference'); setRegisterResult(null); setRegistrationNotice(''); }} onUpload={uploadScan} onDirectory={() => setMode('directory')} onVideo={() => setMode('video')} />}
-      {mode === 'scan' && <ScanScreen {...{ stream, videoRef, canvasRef, cameraError, capturedFile, setCapturedFile, captureFace, scanImage, isScanning, scanResult, uploadScan, goHome, startCamera }} />}
-      {mode === 'reference' && <ReferenceScreen {...{ referenceFiles, setReferenceFiles, personId, setPersonId, personName, setPersonName, registerReference, isRegistering, registerResult, goHome }} />}
+      {mode === 'start' && <StartScreen backendOnline={backendOnline} notice={registrationNotice} onScan={startCamera} onReference={() => { setMode('reference'); setRegisterResult(null); setRegistrationNotice(''); }} onUpload={uploadScan} onDirectory={() => setMode('directory')} onVideo={() => setMode('video')} onReverse={() => setMode('reverse')} />}
+      {mode === 'scan' && <ScanScreen {...{ capturedFile, scanImage, isScanning, scanResult, uploadScan, goHome }} />}
+      {mode === 'live-register' && <LiveRegistrationScreen {...{ stream, videoRef, canvasRef, cameraError, capturedFiles, setCapturedFiles, captureFace, registerLive, isRegistering, registerResult, personId, setPersonId, personName, setPersonName, personEmail, setPersonEmail, goHome, startCamera }} />}
+      {mode === 'reference' && <ReferenceScreen {...{ referenceFiles, setReferenceFiles, personId, setPersonId, personName, setPersonName, personEmail, setPersonEmail, registerReference, isRegistering, registerResult, goHome }} />}
       {mode === 'directory' && <DirectoryScreen persons={persons} recentAdds={recentAdds} onDelete={deletePerson} onReference={() => setMode('reference')} goHome={goHome} />}
       {mode === 'video' && <VideoScreen {...{ videoFiles, setVideoFiles, videoResults, scanVideo, isVideoScanning, goHome }} />}
+      {mode === 'reverse' && <ReverseSearchScreen goHome={goHome} />}
     </main>
     {progress && <ProgressBar progress={progress} />}
     <ActivityTerminal entries={activityLog} />
@@ -119,11 +134,55 @@ function App() {
   </div>;
 }
 
-function StartScreen({ backendOnline, notice, onScan, onReference, onUpload, onDirectory, onVideo }) { return <section className="start-screen"><div className="intro"><div className="hero-art"><img src="/icon2.png" alt="SWARAKSHA shield" /></div><span className="kicker">Identity protection console</span><h1>Protect a face. Check a file.</h1><p>Use a live camera, trusted reference images, or a video to inspect identity matches and authenticity.</p><div className={`backend-note ${backendOnline ? 'ready' : ''}`}><span className="status-dot" />{backendOnline ? 'Protection service ready' : 'Start the backend to enable protection'}</div>{notice && <div className="backend-note ready"><Check size={14} />{notice}</div>}</div><div className="choice-grid"><button className="choice-card primary-choice" onClick={onScan}><span className="choice-icon"><Camera size={23} /></span><span><strong>Scan my face</strong><small>Use your camera to capture a live face image.</small></span><b>→</b></button><button className="choice-card" onClick={onReference}><span className="choice-icon"><ImagePlus size={23} /></span><span><strong>Add reference images</strong><small>Register five or more trusted face images.</small></span><b>→</b></button><label className="upload-link"><UploadCloud size={16} /> Or upload an image to scan<input type="file" accept="image/*" onChange={(event) => onUpload(event.target.files[0])} /></label><button className="utility-link" onClick={onDirectory}><FolderOpen size={15} /> View protected directory</button><button className="utility-link" onClick={onVideo}><FileVideo size={15} /> Submit a video for checking</button></div></section> }
+function StartScreen({ backendOnline, notice, onScan, onReference, onUpload, onDirectory, onVideo, onReverse }) { return <section className="start-screen"><div className="intro"><div className="hero-art"><img src="/icon2.png" alt="SWARAKSHA shield" /></div><span className="kicker">Identity protection console</span><h1>Protect a face. Check a file.</h1><p>Use a live camera, trusted reference images, or a video to inspect identity matches and authenticity.</p><div className={`backend-note ${backendOnline ? 'ready' : ''}`}><span className="status-dot" />{backendOnline ? 'Protection service ready' : 'Start the backend to enable protection'}</div>{notice && <div className="backend-note ready"><Check size={14} />{notice}</div>}</div><div className="choice-grid"><button className="choice-card primary-choice" onClick={onScan}><span className="choice-icon"><ScanFace size={23} /></span><span><strong>Register via Camera</strong><small>Use your camera to register a new user.</small></span><b>→</b></button><button className="choice-card" onClick={onReference}><span className="choice-icon"><ImagePlus size={23} /></span><span><strong>Add reference images</strong><small>Register five or more trusted face images.</small></span><b>→</b></button><label className="upload-link"><UploadCloud size={16} /> Or upload an image to scan<input type="file" accept="image/*" onChange={(event) => onUpload(event.target.files[0])} /></label><button className="utility-link" onClick={onDirectory}><FolderOpen size={15} /> View protected directory</button><button className="utility-link" onClick={onVideo}><FileVideo size={15} /> Submit a video for checking</button><button className="utility-link" onClick={onReverse}><Search size={15} /> Reverse Image Search (Layer 3)</button></div></section> }
 
-function ScanScreen({ stream, videoRef, canvasRef, cameraError, capturedFile, setCapturedFile, captureFace, scanImage, isScanning, scanResult, uploadScan, goHome, startCamera }) { const preview = capturedFile ? URL.createObjectURL(capturedFile) : null; return <section className="work-screen"><BackButton onClick={goHome} /><div className="work-heading"><span className="kicker">Live face scan</span><h2>Look into the camera</h2><p>Center your face in the frame. We’ll capture one image and check it with SWARAKSHA.</p></div><div className="scan-workspace"><div className="camera-panel">{capturedFile ? <img className="captured-preview" src={preview} alt="Captured face" /> : stream ? <video ref={videoRef} autoPlay playsInline muted /> : <div className="camera-empty"><Camera size={27} /><strong>Camera preview unavailable</strong><span>{cameraError || 'Preparing your camera...'}</span></div>}<div className="camera-actions">{capturedFile ? <><button className="button secondary" onClick={() => setCapturedFile(null)}><X size={16} /> Retake</button><button className="button primary" onClick={scanImage} disabled={isScanning}>{isScanning ? <LoaderCircle className="spin" size={16} /> : <Shield size={16} />}{isScanning ? 'Checking...' : 'Check this face'}</button></> : <button className="button primary" onClick={captureFace} disabled={!stream}><Camera size={17} /> Capture face</button>}</div></div><div className="result-card">{scanResult ? <Result result={scanResult} /> : <><div className="result-placeholder"><ShieldAlert size={25} /><strong>Your result will appear here</strong><p>We’ll look for a protected identity and signs of AI-generated manipulation.</p></div><label className="small-upload">Prefer a file? Upload an image<input type="file" accept="image/*" onChange={(event) => uploadScan(event.target.files[0])} /></label></>}</div></div>{cameraError && <div className="camera-error"><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}<canvas ref={canvasRef} hidden /></section> }
+function ScanScreen({ capturedFile, scanImage, isScanning, scanResult, uploadScan, goHome }) { const preview = capturedFile ? URL.createObjectURL(capturedFile) : null; return <section className="work-screen"><BackButton onClick={goHome} /><div className="work-heading"><span className="kicker">Image Check</span><h2>Scan an Image</h2><p>Upload a file to check for protected identities and AI manipulation.</p></div><div className="scan-workspace"><div className="camera-panel">{capturedFile ? <img className="captured-preview" src={preview} alt="Captured face" /> : <div className="camera-empty"><ImagePlus size={27} /><strong>No image selected</strong></div>}<div className="camera-actions">{capturedFile ? <><button className="button primary" onClick={scanImage} disabled={isScanning}>{isScanning ? <LoaderCircle className="spin" size={16} /> : <Shield size={16} />}{isScanning ? 'Checking...' : 'Check this image'}</button></> : null}</div></div><div className="result-card">{scanResult ? <Result result={scanResult} /> : <><div className="result-placeholder"><ShieldAlert size={25} /><strong>Your result will appear here</strong><p>We’ll look for a protected identity and signs of AI-generated manipulation.</p></div><label className="small-upload">Choose a file<input type="file" accept="image/*" onChange={(event) => uploadScan(event.target.files[0])} /></label></>}</div></div></section> }
 
-function ReferenceScreen({ referenceFiles, setReferenceFiles, personId, setPersonId, personName, setPersonName, registerReference, isRegistering, registerResult, goHome }) { const addFiles = (files) => setReferenceFiles((current) => [...current, ...[...files].filter((file) => file.type.startsWith('image/'))]); return <section className="work-screen reference-screen"><BackButton onClick={goHome} /><div className="work-heading"><span className="kicker">Create a protected identity</span><h2>Upload reference images</h2><p>Add five or more clear photos from different angles. More references make matching more reliable.</p></div><form className="reference-form" onSubmit={registerReference}><div className={`reference-upload ${referenceFiles.length ? 'has-files' : ''}`}>{referenceFiles.length ? <><div className="reference-grid">{referenceFiles.map((file, index) => <div className="reference-thumb" key={`${file.name}-${index}`}><img src={URL.createObjectURL(file)} alt={`Reference ${index + 1}`} /><button type="button" onClick={() => setReferenceFiles(referenceFiles.filter((_, fileIndex) => fileIndex !== index))}><X size={13} /></button></div>)}<label className="add-more"><ImagePlus size={20} /><span>Add more</span><input type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} /></label></div><small className="reference-count">{referenceFiles.length} image{referenceFiles.length === 1 ? '' : 's'} selected · add at least 5 for best results</small></> : <label><UploadCloud size={27} /><strong>Choose 5 or more face images</strong><span>JPG or PNG · use different angles and lighting</span><input type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} /></label>}</div><div className="reference-fields"><label>Person ID<input value={personId} onChange={(event) => setPersonId(event.target.value)} placeholder="e.g. AARTI_001" /></label><label>Name<input value={personName} onChange={(event) => setPersonName(event.target.value)} placeholder="e.g. Aarti Sharma" /></label></div>{registerResult && <div className={`form-result ${registerResult.type}`}><Check size={16} />{registerResult.text}</div>}<button className="button primary submit-reference" disabled={referenceFiles.length < 5 || !personId || !personName || isRegistering}>{isRegistering ? <LoaderCircle className="spin" size={16} /> : <UserRound size={16} />}{isRegistering ? 'Adding identity...' : `Protect identity with ${referenceFiles.length} image${referenceFiles.length === 1 ? '' : 's'}`}</button></form></section> }
+function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capturedFiles, setCapturedFiles, captureFace, registerLive, isRegistering, registerResult, personId, setPersonId, personName, setPersonName, personEmail, setPersonEmail, goHome, startCamera }) { 
+  return <section className="work-screen reference-screen">
+    <BackButton onClick={goHome} />
+    <div className="work-heading">
+      <span className="kicker">Live Registration</span>
+      <h2>Register via Camera</h2>
+      <p>Move your head slowly and capture multiple angles (like setting up Face ID on a smartphone). We need at least 5 frames.</p>
+    </div>
+    <div className="scan-workspace" style={{display: 'flex', gap: '20px', alignItems: 'flex-start'}}>
+      <div className="camera-panel" style={{flex: 1}}>
+        {stream ? <video ref={videoRef} autoPlay playsInline muted /> : <div className="camera-empty"><Camera size={27} /><strong>Camera unavailable</strong><span>{cameraError || 'Preparing...'}</span></div>}
+        <div className="camera-actions" style={{justifyContent: 'center'}}>
+          <button className="button primary" onClick={captureFace} disabled={!stream || isRegistering}><Camera size={17} /> Capture Angle ({capturedFiles.length})</button>
+        </div>
+      </div>
+      
+      <form className="reference-form" onSubmit={registerLive} style={{flex: 1, margin: 0}}>
+        <div className="reference-fields">
+          <label>Person ID<input value={personId} onChange={(e) => setPersonId(e.target.value)} placeholder="e.g. AARTI_001" required /></label>
+          <label>Name<input value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="e.g. Aarti Sharma" required /></label>
+          <label>Email Address<input type="email" value={personEmail} onChange={(e) => setPersonEmail(e.target.value)} placeholder="e.g. alert@example.com" required /></label>
+        </div>
+        
+        {capturedFiles.length > 0 && <div className="reference-grid" style={{marginTop: '15px'}}>
+          {capturedFiles.map((file, idx) => (
+            <div className="reference-thumb" key={idx}>
+              <img src={URL.createObjectURL(file)} alt={`Capture ${idx+1}`} />
+              <button type="button" onClick={() => setCapturedFiles(capturedFiles.filter((_, i) => i !== idx))}><X size={13} /></button>
+            </div>
+          ))}
+        </div>}
+        
+        {registerResult && <div className={`form-result ${registerResult.type}`}><Check size={16} />{registerResult.text}</div>}
+        <button className="button primary submit-reference" disabled={capturedFiles.length < 5 || !personId || !personName || !personEmail || isRegistering} style={{marginTop: '15px'}}>
+          {isRegistering ? <LoaderCircle className="spin" size={16} /> : <UserRound size={16} />}
+          {isRegistering ? 'Registering...' : `Register Profile (${capturedFiles.length}/5 minimum)`}
+        </button>
+      </form>
+    </div>
+    {cameraError && <div className="camera-error" style={{marginTop: '10px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}
+    <canvas ref={canvasRef} hidden />
+  </section>;
+}
+
+function ReferenceScreen({ referenceFiles, setReferenceFiles, personId, setPersonId, personName, setPersonName, personEmail, setPersonEmail, registerReference, isRegistering, registerResult, goHome }) { const addFiles = (files) => setReferenceFiles((current) => [...current, ...[...files].filter((file) => file.type.startsWith('image/'))]); return <section className="work-screen reference-screen"><BackButton onClick={goHome} /><div className="work-heading"><span className="kicker">Create a protected identity</span><h2>Upload reference images</h2><p>Take photos from multiple angles (like setting up Face ID/recognition on a smartphone). Add five or more clear photos from different angles for best results.</p></div><form className="reference-form" onSubmit={registerReference}><div className={`reference-upload ${referenceFiles.length ? 'has-files' : ''}`}>{referenceFiles.length ? <><div className="reference-grid">{referenceFiles.map((file, index) => <div className="reference-thumb" key={`${file.name}-${index}`}><img src={URL.createObjectURL(file)} alt={`Reference ${index + 1}`} /><button type="button" onClick={() => setReferenceFiles(referenceFiles.filter((_, fileIndex) => fileIndex !== index))}><X size={13} /></button></div>)}<label className="add-more"><ImagePlus size={20} /><span>Add more</span><input type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} /></label></div><small className="reference-count">{referenceFiles.length} image{referenceFiles.length === 1 ? '' : 's'} selected · add at least 5 for best results</small></> : <label><UploadCloud size={27} /><strong>Choose 5 or more face images</strong><span>JPG or PNG · use different angles and lighting</span><input type="file" accept="image/*" multiple onChange={(event) => addFiles(event.target.files)} /></label>}</div><div className="reference-fields"><label>Person ID<input value={personId} onChange={(event) => setPersonId(event.target.value)} placeholder="e.g. AARTI_001" required /></label><label>Name<input value={personName} onChange={(event) => setPersonName(event.target.value)} placeholder="e.g. Aarti Sharma" required /></label><label>Email Address<input type="email" value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="e.g. alert@example.com" required /></label></div>{registerResult && <div className={`form-result ${registerResult.type}`}><Check size={16} />{registerResult.text}</div>}<button className="button primary submit-reference" disabled={referenceFiles.length < 5 || !personId || !personName || !personEmail || isRegistering}>{isRegistering ? <LoaderCircle className="spin" size={16} /> : <UserRound size={16} />}{isRegistering ? 'Adding identity...' : `Protect identity with ${referenceFiles.length} image${referenceFiles.length === 1 ? '' : 's'}`}</button></form></section> }
 
 function ProgressBar({ progress }) { return <div className="progress-dock"><div className="progress-copy"><LoaderCircle className="spin" size={15} /><strong>{progress.label}</strong><span>{progress.value}%</span></div><div className="progress-track"><i style={{ width: `${progress.value}%` }} /></div></div> }
 function ActivityTerminal({ entries }) { return <section className="activity-terminal"><div><span className="terminal-dot red" /><span className="terminal-dot yellow" /><span className="terminal-dot green" /><strong>SWARAKSHA process</strong></div>{entries.map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>)}</section> }
@@ -171,8 +230,42 @@ function VideoResultCard({ result }) {
           })}
         </div>
       </div>
+      {result.layer_3 && <Layer3Panel layer3={result.layer_3} />}
       {result.metadata_forensics && <VideoMetadataPanel meta={result.metadata_forensics} />}
     </article>
+  );
+}
+
+function Layer3Panel({ layer3 }) {
+  if (!layer3 || !layer3.performed) return null;
+  const isDiscrepancy = layer3.context_discrepancies > 0;
+  return (
+    <div className={`metadata-panel ${isDiscrepancy ? 'metadata-warning' : 'metadata-clean'}`} style={{marginTop: '12px'}}>
+      <div className="metadata-header">
+        <strong><Eye size={14} style={{display: 'inline-block', verticalAlign: 'middle', marginRight: '4px'}}/> Visual Forensic Context (Layer 3)</strong>
+        <span className={isDiscrepancy ? 'bad-text' : 'good-text'}>{layer3.status.replace(/_/g, ' ')}</span>
+      </div>
+      <div style={{fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '8px', lineHeight: '1.4'}}>
+        Analyzed {layer3.query_frames} suspicious frames. Found {layer3.strong_matches} contextual matches.
+      </div>
+      {layer3.matches && layer3.matches.length > 0 ? (
+         <div className="layer3-matches" style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+            {layer3.matches.map((match, i) => (
+               <div key={i} className="layer3-match-row" style={{borderLeft: `3px solid ${match.face_discrepancy ? '#d32f2f' : '#2e7d32'}`, paddingLeft: '10px', background: 'var(--card-bg-subtle)', padding: '8px', borderRadius: '4px', fontSize: '0.85rem'}}>
+                 <div style={{fontWeight: '600', marginBottom: '4px'}}>Frame {match.query_frame} ({match.query_timestamp}s)</div>
+                 <div style={{color: 'var(--text-dim)'}}>Matched Reference: {match.reference.source_path} {match.reference.source_type === 'video' ? `(Frame ${match.reference.frame_number})` : ''}</div>
+                 <div style={{display: 'flex', gap: '12px', margin: '4px 0'}}>
+                    <span><strong>Context Sim:</strong> {(match.context_similarity*100).toFixed(1)}%</span>
+                    <span><strong>Face Sim:</strong> {(match.face_similarity*100).toFixed(1)}%</span>
+                 </div>
+                 {match.face_discrepancy && <div className="bad-text" style={{marginTop: '4px'}}><strong>⚠ DISCREPANCY:</strong> Same background context, but completely different face!</div>}
+               </div>
+            ))}
+         </div>
+      ) : (
+        <p className="metadata-clean-msg">No context matches found in the visual reference database.</p>
+      )}
+    </div>
   );
 }
 
@@ -218,6 +311,61 @@ function MetadataPanel({ meta }) {
       )}
     </div>
   );
+}
+
+function ReverseSearchScreen({ goHome }) {
+  const [file, setFile] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState(null);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!file || isSearching) return;
+    setIsSearching(true); setError(null); setResults(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const response = await axios.post(`${API_BASE}/reverse-search`, formData);
+      setResults(response.data.matches);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to search image.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  return <section className="work-screen">
+    <BackButton onClick={goHome} />
+    <div className="work-heading">
+      <span className="kicker">Visual Forensics</span>
+      <h2>Reverse Image Search</h2>
+      <p>Upload an image to search its background context in the reference index.</p>
+    </div>
+    <form className="reference-form" onSubmit={handleSearch}>
+      <label className="video-drop"><ImagePlus size={30} /><strong>Choose an image</strong><input type="file" accept="image/*" onChange={(e) => setFile(e.target.files[0])} /></label>
+      {file && <div className="video-queue"><div><ImagePlus size={14} /><span>{file.name}</span><button type="button" onClick={() => setFile(null)}><X size={14} /></button></div></div>}
+      <button className="button primary submit-reference" disabled={!file || isSearching}>
+        {isSearching ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}
+        {isSearching ? 'Searching...' : 'Search Context'}
+      </button>
+    </form>
+    {error && <div className="camera-error"><ShieldAlert size={16} />{error}</div>}
+    {results && (
+      <div className="directory-card" style={{marginTop: '20px'}}>
+        <h3 style={{marginBottom: '10px'}}>Top Matches</h3>
+        {results.length === 0 ? <p>No matches found in the visual index.</p> : results.map((match, i) => (
+          <div key={i} className="directory-row" style={{borderLeft: '3px solid var(--accent)', paddingLeft: '10px', margin: '10px 0'}}>
+            <div>
+              <strong>Source:</strong> {match.reference.source_path}<br/>
+              {match.reference.source_type === 'video' && <small>Frame: {match.reference.frame_number}<br/></small>}
+              <strong>Similarity:</strong> {(match.similarity * 100).toFixed(1)}%
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </section>;
 }
 
 export default App;

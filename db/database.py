@@ -31,10 +31,17 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS persons (
                     person_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
+                    email TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     image_count INTEGER DEFAULT 0
                 )
             ''')
+            
+            # Migration: Add email column if it doesn't exist
+            try:
+                self.conn.execute("ALTER TABLE persons ADD COLUMN email TEXT")
+            except sqlite3.OperationalError:
+                pass # Column already exists
             
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS embedding_records (
@@ -46,13 +53,13 @@ class DatabaseManager:
                 )
             ''')
 
-    def add_person(self, person_id: str, name: str) -> dict:
+    def add_person(self, person_id: str, name: str, email: str = None) -> dict:
         """Adds a new person to the database."""
         with self._lock, self.conn:
             try:
                 self.conn.execute(
-                    "INSERT INTO persons (person_id, name) VALUES (?, ?)",
-                    (person_id, name)
+                    "INSERT INTO persons (person_id, name, email) VALUES (?, ?, ?)",
+                    (person_id, name, email)
                 )
             except sqlite3.IntegrityError:
                 raise ValueError(f"Person with ID '{person_id}' already exists.")

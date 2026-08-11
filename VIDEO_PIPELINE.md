@@ -20,8 +20,17 @@ flowchart TD
     
     Relevant --> L2_AI[Layer 2: AI Manipulation Detector]
     
-    L2_AI --> FrameRes[Frame-Level Results]
+    L2_AI -->|AI Flagged| Suspicious[Suspicious Frame]
+    L2_AI -->|Not Flagged| FrameRes[Frame-Level Results]
     Ignore --> FrameRes
+    
+    Suspicious --> L3_Mask[Layer 3: Mask Faces]
+    L3_Mask --> L3_CLIP[Layer 3: CLIP Context Embedding]
+    L3_CLIP --> L3_Match[Layer 3: FAISS Context Match]
+    L3_Match -->|Context Matched| L3_Discrepancy[Layer 3: Face Discrepancy Check]
+    
+    L3_Discrepancy --> FrameRes
+    L3_Match -->|No Match| FrameRes
     
     FrameRes --> Aggregation[Video-Level Aggregation]
     Aggregation --> Decision[Final Video Decision]
