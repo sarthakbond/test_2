@@ -157,6 +157,65 @@ function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capt
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
 
+  // Auto-capture loop
+  useEffect(() => {
+    if (!stream || isComplete || isRegistering) return;
+    
+    let isProcessing = false;
+    const interval = setInterval(async () => {
+      if (isProcessing) return;
+      isProcessing = true;
+      
+      try {
+        if (!videoRef.current || !canvasRef.current) {
+          isProcessing = false;
+          return;
+        }
+        
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
+        
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          isProcessing = false;
+          return;
+        }
+        
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+        if (!blob) {
+          isProcessing = false;
+          return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', blob, 'frame.jpg');
+        formData.append('requested_pose', currentPrompt);
+        
+        const res = await fetch('http://127.0.0.1:8000/api/auto-capture', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.captured) {
+            const file = new File([blob], `auto_capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
+            setCapturedFiles(prev => [...prev, file]);
+          }
+        }
+      } catch (err) {
+        console.error("Auto-capture error:", err);
+      }
+      isProcessing = false;
+    }, 600); // check every 600ms
+    
+    return () => clearInterval(interval);
+  }, [stream, isComplete, isRegistering, currentPrompt, setCapturedFiles, videoRef, canvasRef]);
+
   return <section className="work-screen reference-screen">
     <BackButton onClick={goHome} />
     <div className="work-heading">
@@ -185,8 +244,8 @@ function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capt
         </div>
 
         <div className="camera-actions" style={{justifyContent: 'center', width: '100%', margin: 0}}>
-          <button type="button" className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} onClick={captureFace} disabled={!stream || isRegistering || isComplete}>
-            <Camera size={17} /> {isComplete ? 'Scan Complete' : `Capture Angle (${progressCount}/5)`}
+          <button type="button" className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} disabled>
+            {isComplete ? <><Camera size={17} /> Scan Complete</> : <><LoaderCircle className="spin" size={17} /> Scanning ({progressCount}/5)...</>}
           </button>
         </div>
         {cameraError && <div className="camera-error" style={{marginTop: '15px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}

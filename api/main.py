@@ -28,6 +28,7 @@ from core.visual_index import visual_index_manager
 from core.face_masker import mask_faces
 from core.forensic_analyzer import compare_faces, get_reference_image, analyze_forensic_risk
 from core.notifier import send_alert_email
+from core.pose_estimator import estimate_pose
 
 app = FastAPI(
     title="SWARAKSHA API",
@@ -108,6 +109,11 @@ class PersonResponse(BaseModel):
     email: Optional[str] = None
     created_at: Optional[str] = None
     image_count: int = 0
+
+class AutoCaptureResponse(BaseModel):
+    captured: bool
+    pose: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class RegisterResponse(BaseModel):
@@ -282,6 +288,37 @@ async def register_person(
         faces_registered=faces_registered,
         total_embeddings=face_index.total_embeddings,
     )
+
+@app.post("/api/auto-capture", response_model=AutoCaptureResponse)
+async def auto_capture(
+    requested_pose: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """Analyze a frame and return whether it matches the requested pose."""
+    contents = await file.read()
+    img = _decode_image(contents)
+    
+    detected_pose = estimate_pose(img)
+    
+    if not detected_pose:
+        return AutoCaptureResponse(captured=False, reason="No face detected or landmarks missing")
+        
+    prompt_to_pose = {
+        "Look straight at the camera": "straight",
+        "Turn head slightly Left": "left",
+        "Turn head slightly Right": "right",
+        "Tilt head slightly Up": "up",
+        "Tilt head slightly Down": "down",
+        "Scan Complete - Ready to save": "straight"
+    }
+    
+    expected = prompt_to_pose.get(requested_pose, "straight")
+    
+    if detected_pose == expected:
+        return AutoCaptureResponse(captured=True, pose=detected_pose)
+    else:
+        return AutoCaptureResponse(captured=False, pose=detected_pose, reason=f"Expected {expected}, got {detected_pose}")
+
 
 
 @app.post("/api/recognize", response_model=RecognizeResponse)
