@@ -52,13 +52,15 @@ def estimate_pose(img: np.ndarray) -> str:
     
     yaw_ratio = nose_to_re_x / le_to_nose_x if le_to_nose_x > 0 else 1.0
     
-    if yaw_ratio > 1.6:
+    print(f"[POSE] Pitch ratio: {pitch_ratio:.2f} | Yaw ratio: {yaw_ratio:.2f}")
+    
+    if yaw_ratio > 1.15:
         return "left"  # Looking left
-    elif yaw_ratio < 0.6:
+    elif yaw_ratio < 0.85:
         return "right" # Looking right
-    elif pitch_ratio < 0.65:
+    elif pitch_ratio < 0.85:
         return "up"    # Looking up
-    elif pitch_ratio > 1.4:
+    elif pitch_ratio > 1.15:
         return "down"  # Looking down
         
     return "straight"

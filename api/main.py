@@ -304,17 +304,17 @@ async def auto_capture(
         return AutoCaptureResponse(captured=False, reason="No face detected or landmarks missing")
         
     prompt_to_pose = {
-        "Look straight at the camera": "straight",
-        "Turn head slightly Left": "left",
-        "Turn head slightly Right": "right",
-        "Tilt head slightly Up": "up",
-        "Tilt head slightly Down": "down",
-        "Scan Complete - Ready to save": "straight"
+        "Look straight at the camera": ["straight"],
+        "Turn head slightly Left": ["left", "right"],
+        "Turn head slightly Right": ["right", "left"],
+        "Tilt head slightly Up": ["up"],
+        "Tilt head slightly Down": ["down"],
+        "Scan Complete - Ready to save": ["straight"]
     }
     
-    expected = prompt_to_pose.get(requested_pose, "straight")
+    expected = prompt_to_pose.get(requested_pose, ["straight"])
     
-    if detected_pose == expected:
+    if detected_pose in expected:
         return AutoCaptureResponse(captured=True, pose=detected_pose)
     else:
         return AutoCaptureResponse(captured=False, pose=detected_pose, reason=f"Expected {expected}, got {detected_pose}")
