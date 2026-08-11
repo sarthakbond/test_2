@@ -138,46 +138,74 @@ function StartScreen({ backendOnline, notice, onScan, onReference, onUpload, onD
 
 function ScanScreen({ capturedFile, scanImage, isScanning, scanResult, uploadScan, goHome }) { const preview = capturedFile ? URL.createObjectURL(capturedFile) : null; return <section className="work-screen"><BackButton onClick={goHome} /><div className="work-heading"><span className="kicker">Image Check</span><h2>Scan an Image</h2><p>Upload a file to check for protected identities and AI manipulation.</p></div><div className="scan-workspace"><div className="camera-panel">{capturedFile ? <img className="captured-preview" src={preview} alt="Captured face" /> : <div className="camera-empty"><ImagePlus size={27} /><strong>No image selected</strong></div>}<div className="camera-actions">{capturedFile ? <><button className="button primary" onClick={scanImage} disabled={isScanning}>{isScanning ? <LoaderCircle className="spin" size={16} /> : <Shield size={16} />}{isScanning ? 'Checking...' : 'Check this image'}</button></> : null}</div></div><div className="result-card">{scanResult ? <Result result={scanResult} /> : <><div className="result-placeholder"><ShieldAlert size={25} /><strong>Your result will appear here</strong><p>We’ll look for a protected identity and signs of AI-generated manipulation.</p></div><label className="small-upload">Choose a file<input type="file" accept="image/*" onChange={(event) => uploadScan(event.target.files[0])} /></label></>}</div></div></section> }
 
+const FACE_PROMPTS = [
+  "Look straight at the camera",
+  "Turn head slightly Left",
+  "Turn head slightly Right",
+  "Tilt head slightly Up",
+  "Tilt head slightly Down",
+  "Scan Complete - Ready to save"
+];
+
 function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capturedFiles, setCapturedFiles, captureFace, registerLive, isRegistering, registerResult, personId, setPersonId, personName, setPersonName, personEmail, setPersonEmail, goHome, startCamera }) { 
+  const progressCount = Math.min(capturedFiles.length, 5);
+  const currentPrompt = FACE_PROMPTS[progressCount];
+  const isComplete = progressCount >= 5;
+  const progressPercent = (progressCount / 5) * 100;
+  
+  const radius = 130;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
+
   return <section className="work-screen reference-screen">
     <BackButton onClick={goHome} />
     <div className="work-heading">
       <span className="kicker">Live Registration</span>
       <h2>Register via Camera</h2>
-      <p>Move your head slowly and capture multiple angles (like setting up Face ID on a smartphone). We need at least 5 frames.</p>
+      <p>Follow the prompts to capture your face from multiple angles.</p>
     </div>
-    <div className="scan-workspace" style={{display: 'flex', gap: '20px', alignItems: 'flex-start'}}>
-      <div className="camera-panel" style={{flex: 1}}>
-        {stream ? <video ref={videoRef} autoPlay playsInline muted /> : <div className="camera-empty"><Camera size={27} /><strong>Camera unavailable</strong><span>{cameraError || 'Preparing...'}</span></div>}
-        <div className="camera-actions" style={{justifyContent: 'center'}}>
-          <button className="button primary" onClick={captureFace} disabled={!stream || isRegistering}><Camera size={17} /> Capture Angle ({capturedFiles.length})</button>
+    
+    <div className="scan-workspace" style={{display: 'flex', gap: '30px', alignItems: 'center'}}>
+      <div className="face-id-container" style={{flex: 1}}>
+        <div className={`face-id-prompt ${isComplete ? 'complete' : 'pulsing'}`}>
+          {currentPrompt}
         </div>
+        
+        <div className="face-id-ring-wrapper">
+          <div className={`face-id-ring ${isComplete ? 'complete' : ''}`}>
+            <svg>
+              <circle className="track" cx="136" cy="136" r={radius} />
+              <circle className="progress" cx="136" cy="136" r={radius} strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} />
+            </svg>
+          </div>
+          
+          <div className="face-id-camera">
+            {stream ? <video ref={videoRef} autoPlay playsInline muted /> : <div className="camera-empty"><Camera size={27} /><strong>Camera unavailable</strong><span>{cameraError || 'Preparing...'}</span></div>}
+          </div>
+        </div>
+
+        <div className="camera-actions" style={{justifyContent: 'center', width: '100%', margin: 0}}>
+          <button type="button" className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} onClick={captureFace} disabled={!stream || isRegistering || isComplete}>
+            <Camera size={17} /> {isComplete ? 'Scan Complete' : `Capture Angle (${progressCount}/5)`}
+          </button>
+        </div>
+        {cameraError && <div className="camera-error" style={{marginTop: '15px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}
       </div>
       
       <form className="reference-form" onSubmit={registerLive} style={{flex: 1, margin: 0}}>
-        <div className="reference-fields">
+        <div className="reference-fields" style={{gridTemplateColumns: '1fr'}}>
           <label>Person ID<input value={personId} onChange={(e) => setPersonId(e.target.value)} placeholder="e.g. AARTI_001" required /></label>
           <label>Name<input value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="e.g. Aarti Sharma" required /></label>
           <label>Email Address<input type="email" value={personEmail} onChange={(e) => setPersonEmail(e.target.value)} placeholder="e.g. alert@example.com" required /></label>
         </div>
         
-        {capturedFiles.length > 0 && <div className="reference-grid" style={{marginTop: '15px'}}>
-          {capturedFiles.map((file, idx) => (
-            <div className="reference-thumb" key={idx}>
-              <img src={URL.createObjectURL(file)} alt={`Capture ${idx+1}`} />
-              <button type="button" onClick={() => setCapturedFiles(capturedFiles.filter((_, i) => i !== idx))}><X size={13} /></button>
-            </div>
-          ))}
-        </div>}
-        
         {registerResult && <div className={`form-result ${registerResult.type}`}><Check size={16} />{registerResult.text}</div>}
-        <button className="button primary submit-reference" disabled={capturedFiles.length < 5 || !personId || !personName || !personEmail || isRegistering} style={{marginTop: '15px'}}>
+        <button className="button primary submit-reference" disabled={!isComplete || !personId || !personName || !personEmail || isRegistering} style={{marginTop: '25px'}}>
           {isRegistering ? <LoaderCircle className="spin" size={16} /> : <UserRound size={16} />}
-          {isRegistering ? 'Registering...' : `Register Profile (${capturedFiles.length}/5 minimum)`}
+          {isRegistering ? 'Registering...' : 'Save Protected Profile'}
         </button>
       </form>
     </div>
-    {cameraError && <div className="camera-error" style={{marginTop: '10px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}
     <canvas ref={canvasRef} hidden />
   </section>;
 }

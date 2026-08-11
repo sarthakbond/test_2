@@ -152,3 +152,92 @@ body { color:var(--ink); background:#090612; background-image:radial-gradient(ci
   font-size: 11px;
   margin: 0;
 }
+
+/* Face ID UI */
+.face-id-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  background: var(--card-bg-subtle, #fbfcfe);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+}
+.face-id-ring-wrapper {
+  position: relative;
+  width: 272px;
+  height: 272px;
+  margin-bottom: 24px;
+}
+.face-id-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: 0 0 25px rgba(33,103,213,0.08);
+}
+.face-id-ring svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+.face-id-ring circle.track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 6;
+}
+.face-id-ring circle.progress {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.3s ease;
+}
+.face-id-ring.complete circle.progress {
+  stroke: var(--green);
+}
+.face-id-camera {
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #101824;
+  z-index: 1;
+}
+.face-id-camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror */
+}
+.face-id-prompt {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+  height: 24px;
+  margin-bottom: 20px;
+  transition: color 0.3s;
+}
+.face-id-prompt.pulsing {
+  animation: pulse-prompt 2s infinite;
+}
+.face-id-prompt.complete {
+  color: var(--green);
+}
+@keyframes pulse-prompt {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
+.face-id-btn {
+  padding: 14px 28px;
+  font-size: 14px;
+  border-radius: 30px;
+}
