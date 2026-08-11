@@ -244,20 +244,16 @@ function LiveRegistrationScreen({ stream, videoRef, canvasRef, cameraError, capt
         </div>
 
         <div className="camera-actions" style={{justifyContent: 'center', width: '100%', margin: 0, flexDirection: 'column', gap: '15px', alignItems: 'center'}}>
-          <button type="button" className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} disabled>
+          <label className={`button primary face-id-btn ${isComplete ? 'secondary' : ''}`} style={{ cursor: isComplete ? 'default' : 'pointer' }} title={!isComplete ? "Click to manually upload a photo if auto-scan fails" : ""}>
             {isComplete ? <><Camera size={17} /> Scan Complete</> : <><LoaderCircle className="spin" size={17} /> Scanning ({progressCount}/5)...</>}
-          </button>
-          
-          {!isComplete && (
-            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 15px', background: 'rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff', fontSize: '13px', transition: 'all 0.2s', marginTop: '10px' }}>
-              <UploadCloud size={15} /> <span>Or select a photo manually</span>
+            {!isComplete && (
               <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   setCapturedFiles(prev => [...prev, e.target.files[0]]);
                 }
               }} />
-            </label>
-          )}
+            )}
+          </label>
         </div>
         {cameraError && <div className="camera-error" style={{marginTop: '15px'}}><ShieldAlert size={16} />{cameraError}<button onClick={startCamera}>Try camera again</button></div>}
       </div>
